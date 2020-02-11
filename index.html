@@ -1,0 +1,155 @@
+<html>
+
+<head>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" />
+    <!-- Load required Bootstrap and BootstrapVue CSS -->
+    <link type="text/css" rel="stylesheet" href="https://unpkg.com/bootstrap/dist/css/bootstrap.min.css" />
+    <link type="text/css" rel="stylesheet" href="https://unpkg.com/bootstrap-vue@latest/dist/bootstrap-vue.min.css" />
+</head>
+
+<body>
+    <!-- The core Firebase JS SDK is always required and must be listed first -->
+    <script src="https://www.gstatic.com/firebasejs/7.8.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/7.8.1/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/7.8.1/firebase-analytics.js"></script>
+    <script>
+        // Your web app's Firebase configuration
+        var firebaseConfig = {
+            apiKey: "AIzaSyCQSAvQmdIOUVXlBFLLPqrF5dNUjslLSVU",
+            authDomain: "eft-map-4dd46.firebaseapp.com",
+            databaseURL: "https://eft-map-4dd46.firebaseio.com",
+            projectId: "eft-map-4dd46",
+            storageBucket: "eft-map-4dd46.appspot.com",
+            messagingSenderId: "781587830452",
+            appId: "1:781587830452:web:8cce1bfb9a8c76b18a69e1",
+            measurementId: "G-REVNZ8TMH2"
+        };
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        firebase.analytics();
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/vue2-leaflet"></script>
+    <!-- Load polyfills to support older browsers -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es2015%2CIntersectionObserver"
+        crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/bootstrap-vue@latest/dist/bootstrap-vue.min.js"></script>
+
+    <div id="app">
+        <b-select id="select-map" name="map" v-model="selectedMap" @change="changeMap">
+            <option v-for="map in maps" v-bind:value="map">{{ map.name }}</option>
+        </b-select>
+        <b-button variant="primary" @click="addMarker">マーカー追加</b-button>
+        <b-button variant="outline-danger" @click="removeAllMarker">マーカー全削除</b-button>
+        <l-map :bounds="selectedMap.bounds" :min-zoom="minZoom" :crs="crs" @update:center="centerUpdated" @update:zoom="zoomUpdated">
+            <l-marker @click.right="removeMarker(marker)" @mouseup.left="dragEnd(marker)" v-for="marker in markers"
+                :key="marker.id" :lat-lng.sync="marker.latlng" :draggable="true">
+            </l-marker>
+            <l-image-overlay :url="selectedMap.url" :bounds="selectedMap.bounds" />
+        </l-map>
+    </div>
+
+    <script>
+        Vue.config.devtools = true;
+
+        var { LMap, LImageOverlay, LMarker } = Vue2Leaflet;
+        var db = firebase.firestore();
+        const markersRef = db.collection("markers");
+        var unsubscribe;
+
+        new Vue({
+            el: "#app",
+            components: { LMap, LImageOverlay, LMarker },
+            data() {
+                return {
+                    center: [],
+                    minZoom: -2,
+                    crs: L.CRS.Simple,
+                    maps: [
+                        { name: "Customs", bounds: [[0, 0], [930, 1920]], url: "images/customs.png" },
+                        { name: "Factory", bounds: [[0, 0], [821, 1161]], url: "images/factory.png" },
+                        { name: "Woods", bounds: [[0, 0], [576, 1024]], url: "images/woods.png" },
+                        { name: "Shoreline", bounds: [[0, 0], [742, 1500]], url: "images/shoreline.png" },
+                        { name: "Interchange", bounds: [[0, 0], [2800, 4500]], url: "images/interchange.png" },
+                        { name: "The Lab", bounds: [[0, 0], [2160, 4096]], url: "images/thelab.png" },
+                        { name: "Reserve", bounds: [[0, 0], [616, 1280]], url: "images/reserve.png" }],
+                    selectedMap: "",
+                    markers: [],
+                    user: { uid: "" }
+                };
+            },
+            created() {
+                // firebase.auth().signInAnonymously().catch(function (error) {
+                //     console.log(error.code);
+                //     console.log(error.message);
+                // });
+                this.selectedMap = this.maps[0];
+                this.changeMap();
+            },
+            methods: {
+                changeMap() {
+                    // マップ変更前のリスナーをデタッチする
+                    if (typeof unsubscribe === "function") {
+                        unsubscribe();
+                    }
+                    
+                    // 選択されたマップのマーカーをリスナーで取得
+                    unsubscribe = markersRef.where("map", "==", this.selectedMap.name).onSnapshot((querySnapshot) => {
+                        this.markers = [];
+                        querySnapshot.forEach((doc) => {
+                            let marker = {
+                                id: doc.id,
+                                latlng: doc.data().latlng
+                            }
+                            this.markers.push(marker);
+                        })
+                    },
+                        function (error) {
+                            console.error("Error listen data:", error);
+                        }
+                    )
+                },
+                addMarker() {
+                    var marker = {
+                        map: this.selectedMap.name,
+                        latlng: { lat: this.center.lat, lng: this.center.lng }
+                    }
+                    this.markers.push(marker)
+                    markersRef.add(marker)
+                        .then(function (docRef) {
+                            console.log("Document written with ID: ", docRef.id);
+                        })
+                        .catch(function (error) {
+                            console.error("Error adding document: ", error);
+                        })
+                },
+                removeMarker(marker) {
+                    markersRef.doc(marker.id).delete();
+                },
+                removeAllMarker() {
+                    if (confirm("全てのマーカーを削除しますか？")) {
+                        var removeTargetQuery = markersRef.where("map", "==", this.selectedMap.name);
+                        removeTargetQuery.get().then(function (querySnapshot) {
+                            querySnapshot.forEach(function (doc) {
+                                doc.ref.delete();
+                            });
+                        });
+                    }
+                },
+                dragEnd(marker) {
+                    markersRef.doc(marker.id).update({ latlng: { lat: marker.latlng.lat, lng: marker.latlng.lng } });
+                },
+                centerUpdated(center) {
+                    this.center = center;
+                },
+                zoomUpdated(zoom) {
+                    console.log(zoom)
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>
