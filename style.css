@@ -2,7 +2,25 @@
   height: 90%;
 }
 
+l-map {
+  width: 100%;
+  height: 100%;
+}
+
 #select-map {
   width: 150px;
   margin: 10px;
+}
+
+#select-marker-color {
+  width: 100px;
+  margin-right: 10px;
+}
+
+#change-connection-info {
+  margin: 10px;
+}
+
+#user-name {
+  margin-bottom: 10px;
 }

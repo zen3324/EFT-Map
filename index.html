@@ -11,6 +11,7 @@
 <body>
     <!-- The core Firebase JS SDK is always required and must be listed first -->
     <script src="https://www.gstatic.com/firebasejs/7.8.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/7.8.1/firebase-auth.js"></script>
     <script src="https://www.gstatic.com/firebasejs/7.8.1/firebase-firestore.js"></script>
     <script src="https://www.gstatic.com/firebasejs/7.8.1/firebase-analytics.js"></script>
     <script>
@@ -38,14 +39,28 @@
     <script src="https://unpkg.com/bootstrap-vue@latest/dist/bootstrap-vue.min.js"></script>
 
     <div id="app">
-        <b-select id="select-map" name="map" v-model="selectedMap" @change="changeMap">
+        <b-select id="select-map" name="map" v-model="selectedMap" @change="fetchMarkers">
             <option v-for="map in maps" v-bind:value="map">{{ map.name }}</option>
+        </b-select>
+        <b-select id="select-marker-color" v-model="selectedMarkerColor">
+            <option v-for="color in markerColors">{{ color }}</option>
         </b-select>
         <b-button variant="primary" @click="addMarker">マーカー追加</b-button>
         <b-button variant="outline-danger" @click="removeAllMarker">マーカー全削除</b-button>
-        <l-map :bounds="selectedMap.bounds" :min-zoom="minZoom" :crs="crs" @update:center="centerUpdated" @update:zoom="zoomUpdated">
-            <l-marker @click.right="removeMarker(marker)" @mouseup.left="dragEnd(marker)" v-for="marker in markers"
-                :key="marker.id" :lat-lng.sync="marker.latlng" :draggable="true">
+        <b-button variant="info" id="change-connection-info" class="float-right" v-b-modal.connection-info>接続情報
+        </b-button>
+        <b-modal id="connection-info" title="接続情報" @show="showConnection" @ok="updateConnection">
+            <label for="user-name">ユーザー名</label>
+            <b-input id="user-name" v-model.lazy="inputUserName"></b-input>
+            <label for="room-id">Room ID</label>
+            <b-input id="room-id" v-model.lazy="inputRoomID"></b-input>
+        </b-modal>
+        <l-map :bounds="selectedMap.bounds" :min-zoom="minZoom" :crs="crs" :options="mapOptions"
+            @update:center="centerUpdated">
+            <l-marker :icon="createMarkerIcon(marker)" @click.right="removeMarker(marker)"
+                @mouseup.left="updateMarkerPosition(marker)" v-for="marker in markers" :key="marker.id"
+                :lat-lng.sync="marker.latlng" :draggable="true">
+                <l-popup>{{ marker.author.name }}</l-popup>
             </l-marker>
             <l-image-overlay :url="selectedMap.url" :bounds="selectedMap.bounds" />
         </l-map>
@@ -54,19 +69,22 @@
     <script>
         Vue.config.devtools = true;
 
-        var { LMap, LImageOverlay, LMarker } = Vue2Leaflet;
+        var { LMap, LImageOverlay, LMarker, LIcon, LPopup } = Vue2Leaflet;
         var db = firebase.firestore();
-        const markersRef = db.collection("markers");
+        const dbMarkersRef = db.collection("markers");
         var unsubscribe;
 
         new Vue({
             el: "#app",
-            components: { LMap, LImageOverlay, LMarker },
+            components: { LMap, LImageOverlay, LMarker, LIcon, LPopup },
             data() {
                 return {
                     center: [],
                     minZoom: -2,
                     crs: L.CRS.Simple,
+                    mapOptions: {
+                        zoomSnap: 0,
+                    },
                     maps: [
                         { name: "Customs", bounds: [[0, 0], [930, 1920]], url: "images/customs.png" },
                         { name: "Factory", bounds: [[0, 0], [821, 1161]], url: "images/factory.png" },
@@ -76,32 +94,82 @@
                         { name: "The Lab", bounds: [[0, 0], [2160, 4096]], url: "images/thelab.png" },
                         { name: "Reserve", bounds: [[0, 0], [616, 1280]], url: "images/reserve.png" }],
                     selectedMap: "",
+                    markerColors: [
+                        "blue",
+                        "red",
+                        "green",
+                        "yellow",
+                        "orange",
+                        "violet",
+                        "grey",
+                        "black",
+                    ],
+                    selectedMarkerColor: "",
                     markers: [],
-                    user: { uid: "" }
+                    user: {},
+                    inputUserName: "",
+                    roomID: "",
+                    inputRoomID: ""
                 };
             },
             created() {
-                // firebase.auth().signInAnonymously().catch(function (error) {
-                //     console.log(error.code);
-                //     console.log(error.message);
-                // });
+                firebase.auth().signInAnonymously().catch(function (error) {
+                    console.error("Signin error:", error.code + " " + error.message);
+                });
+            },
+            mounted() {
+                firebase.auth().onAuthStateChanged(this.onUserLogin);
+                this.roomID = localStorage.roomID ? localStorage.roomID : "tarkov"
                 this.selectedMap = this.maps[0];
-                this.changeMap();
+                this.selectedMarkerColor = this.markerColors[0];
+                this.fetchMarkers();
             },
             methods: {
-                changeMap() {
+                onUserLogin(user) {
+                    if (user) {
+                        this.user = {
+                            uid: user.uid,
+                            name: user.displayName ? user.displayName : "scav"
+                        };
+                    }
+                },
+                showConnection() {
+                    this.inputUserName = this.user.name;
+                    this.inputRoomID = this.roomID;
+                },
+                updateConnection() {
+                    this.user.name = this.inputUserName;
+                    var user = firebase.auth().currentUser;
+                    user.updateProfile({
+                        displayName: this.inputUserName
+                    });
+                    this.roomID = this.inputRoomID;
+                    localStorage.roomID = this.inputRoomID;
+                },
+                createMarkerIcon(marker) {
+                    return L.icon({
+                        iconUrl: "https://cdn.rawgit.com/pointhi/leaflet-color-markers/master/img/marker-icon-" + marker.color + ".png",
+                        shadowUrl: "images/marker-shadow.png",
+                        iconSize: [25, 41],
+                        iconAnchor: [13, 41],
+                        popupAnchor: [0, -41]
+                    })
+                },
+                fetchMarkers() {
                     // マップ変更前のリスナーをデタッチする
                     if (typeof unsubscribe === "function") {
                         unsubscribe();
                     }
-                    
+
                     // 選択されたマップのマーカーをリスナーで取得
-                    unsubscribe = markersRef.where("map", "==", this.selectedMap.name).onSnapshot((querySnapshot) => {
+                    unsubscribe = dbMarkersRef.where("roomID", "==", this.roomID).where("map", "==", this.selectedMap.name).onSnapshot((querySnapshot) => {
                         this.markers = [];
                         querySnapshot.forEach((doc) => {
                             let marker = {
                                 id: doc.id,
-                                latlng: doc.data().latlng
+                                latlng: doc.data().latlng,
+                                color: doc.data().color,
+                                author: doc.data().author
                             }
                             this.markers.push(marker);
                         })
@@ -113,11 +181,13 @@
                 },
                 addMarker() {
                     var marker = {
+                        roomID: this.roomID,
                         map: this.selectedMap.name,
-                        latlng: { lat: this.center.lat, lng: this.center.lng }
+                        latlng: { lat: this.center.lat, lng: this.center.lng },
+                        color: this.selectedMarkerColor,
+                        author: this.user
                     }
-                    this.markers.push(marker)
-                    markersRef.add(marker)
+                    dbMarkersRef.add(marker)
                         .then(function (docRef) {
                             console.log("Document written with ID: ", docRef.id);
                         })
@@ -126,11 +196,12 @@
                         })
                 },
                 removeMarker(marker) {
-                    markersRef.doc(marker.id).delete();
+                    dbMarkersRef.doc(marker.id).delete();
+                    console.log("Document deleted: ", marker.id);
                 },
                 removeAllMarker() {
                     if (confirm("全てのマーカーを削除しますか？")) {
-                        var removeTargetQuery = markersRef.where("map", "==", this.selectedMap.name);
+                        var removeTargetQuery = dbMarkersRef.where("roomID", "==", this.roomID).where("map", "==", this.selectedMap.name);
                         removeTargetQuery.get().then(function (querySnapshot) {
                             querySnapshot.forEach(function (doc) {
                                 doc.ref.delete();
@@ -138,14 +209,16 @@
                         });
                     }
                 },
-                dragEnd(marker) {
-                    markersRef.doc(marker.id).update({ latlng: { lat: marker.latlng.lat, lng: marker.latlng.lng } });
+                updateMarkerPosition(marker) {
+                    dbMarkersRef.doc(marker.id).update({
+                        latlng: { lat: marker.latlng.lat, lng: marker.latlng.lng }
+                    }).catch(function (error) {
+                        // The document probably doesn't exist.
+                        console.error("Error updating document: ", error);
+                    });
                 },
                 centerUpdated(center) {
                     this.center = center;
-                },
-                zoomUpdated(zoom) {
-                    console.log(zoom)
                 }
             }
         });
